@@ -8,6 +8,6 @@ Our open source datasets:
 Codes are currently being uploaded.
 
 Bumblebee detection using our deep-learning model:
-
-on Persicaria: https://www.youtube.com/watch?v=SZiJk3QstGw
-on Trifolium: https://www.youtube.com/watch?v=n9aMfsKr9IM
+- on Lotus creticus: https://www.youtube.com/watch?v=zUV7DKQ0N08
+- on Persicaria: https://www.youtube.com/watch?v=SZiJk3QstGw
+- on Trifolium: https://www.youtube.com/watch?v=n9aMfsKr9IM
