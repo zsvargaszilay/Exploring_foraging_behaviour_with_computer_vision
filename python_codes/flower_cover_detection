@@ -51,7 +51,7 @@ def merge_contours(contours, size_threshold): # Merge contours based on a size t
 path = '.../'
 os.chdir(path)
 # Path to cropped images
-im_path = '.../Kvadrats_croped_images_jpg/'
+im_path = '.../Cropped_quadrat_images_jpg/'
 
 # List all JPG files in the directory
 jpg_files = [file for file in os.listdir(im_path) if file.endswith('.jpg')]
