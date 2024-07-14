@@ -52,6 +52,7 @@ path = '.../'
 os.chdir(path)
 # Path to cropped images
 im_path = '.../Cropped_quadrat_images_jpg/'
+# Source for images: https://figshare.com/articles/figure/Cropped_quadrat_images_for/26300179
 
 # List all JPG files in the directory
 jpg_files = [file for file in os.listdir(im_path) if file.endswith('.jpg')]
