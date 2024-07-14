@@ -12,6 +12,7 @@ Bumblebee detection using our deep-learning model:
 - on Persicaria: https://www.youtube.com/watch?v=SZiJk3QstGw
 - on Trifolium: https://www.youtube.com/watch?v=n9aMfsKr9IM
 
+Data: 
 - Results and specific evaluation metrics of YOLOv5 models (before the post-processing): https://figshare.com/articles/dataset/Yolo_model_results/26299714
 - Heatmaps - the average similarity from the OFC (.npy files): https://figshare.com/articles/dataset/Heatmaps_the_average_similarity_from_the_OFC_/26299642
 
