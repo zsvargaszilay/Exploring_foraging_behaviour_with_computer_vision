@@ -1,0 +1,146 @@
+import os
+import numpy as np
+import pandas as pd
+import ffmpegcv
+import cv2
+
+# INPUT
+# Videos .mp4
+# 'Calibration_with_imageJ_kvadrat.csv' containing quadrat information.
+# 'OFC_of_flowers.csv' containing the OFC values for the videos.
+# Bounding box CSV files: containing the final bb datas
+
+# OUTPUT
+# Heatmap files: NumPy .npy files for each video, e.g., 'GX010896_heatmaps_per_video.npy'.
+
+#############
+# DEFINITIONS
+# Function to calculate the distance between two HSV colors
+def hsv_distance(hsv_image, hsv_color):
+    # Extract HSV values
+    H1, S1, V1 = cv2.split(hsv_image)
+    H2, S2, V2 = hsv_color
+
+    # Calculate hue distance considering circular nature
+    hue_diff = np.minimum(np.abs(H1 - H2), 180 - np.abs(H1 - H2))
+
+    # Calculate saturation and value distances
+    sat_diff = np.abs(S1 - S2)
+    val_diff = np.abs(V1 - V2)
+
+    # Calculate overall distance
+    dist = np.sqrt(hue_diff ** 2 + sat_diff ** 2 + val_diff ** 2)
+    return dist
+
+#############
+# Set the working directory path
+path = '.../'
+os.chdir(path)
+# Paths to bounding box data
+bb_path = ".../All_final_bb_csv/"
+output_path = '.../'
+
+# Read the calibration CSV file
+kvadrat_calibration = pd.read_csv(".../Calibration_with_imageJ_kvadrat.csv", sep=";")
+
+allfiles = os.listdir(path + 'videos/')
+videos = [fname for fname in allfiles if fname.endswith('.mp4')]
+print(videos)
+
+# Read the OFC data
+OFC_df = pd.read_csv(path + 'OFC_of_flowers.csv', sep=';')
+
+video_heatmap = []
+
+for videoname in videos: # Process each video
+    print(videoname)
+    video_path = path + 'videos/' + videoname
+    only_vidname = videoname.rsplit('.', maxsplit=1)[0]
+    cap = ffmpegcv.VideoCapture(video_path, pix_fmt='rgb24')
+
+    # Get OFC values for the video
+    ofc_per_vid = OFC_df[(OFC_df.video_name == only_vidname)]
+    ofc_per_vid = ofc_per_vid.loc[:, ['median_H', 'median_S', 'median_V']]
+    ofc = ofc_per_vid.median(axis=0) # one colour value = H, S, V numbers = compare pixels to this
+
+    # Get quadrat data
+    kvadrat_datas = kvadrat_calibration.loc[
+        kvadrat_calibration.video_name == only_vidname, ["kvadrat_x1", "kvadrat_y1",
+                                                         "kvadrat_x2", "kvadrat_y2",
+                                                         "flower"]]
+
+    kvadrat_x1, kvadrat_y1, kvadrat_x2, kvadrat_y2, flower = kvadrat_datas.iloc[0]
+
+    # Read bounding box data
+    bb_df = pd.read_csv(bb_path + str(only_vidname) + "_final_bb.csv")
+    bb_df['video_name'] = bb_df['video_name'].str[:-4]  # Remove the .mp4 extension
+
+    # Merge bounding box data with calibration data
+    combined_df = pd.merge(bb_df, kvadrat_calibration, how='inner', on='video_name')
+
+    # Filter bounding boxes within the quadrat (60x60)
+    bb_df_updated = combined_df[
+        (combined_df['center_x'] >= combined_df['kvadrat_x1']) &
+        (combined_df['center_x'] <= combined_df['kvadrat_x2']) &
+        (combined_df['center_y'] >= combined_df['kvadrat_y1']) &
+        (combined_df['center_y'] <= combined_df['kvadrat_y2'])
+        ]
+
+    heatmaps_per_video = []
+    heatmaps_ave = []
+
+    counter = 1.
+    while counter <= 3000:
+        ret, img = cap.read()
+
+        if not ret:
+            break
+
+        imr = np.array(img, dtype=np.uint8)
+        hsvimage = cv2.cvtColor(imr, cv2.COLOR_BGR2HSV)
+
+        # Crop the image to the quadrat area
+        hsvimage = hsvimage[kvadrat_y1:kvadrat_y2, kvadrat_x1:kvadrat_x2]
+
+        ofc = np.array(ofc)
+        # Calculate the distance to the OFC value
+        heatmap_img = hsv_distance(hsvimage, ofc)
+
+        # Filter bounding boxes for the current frame
+        bb_boxes = bb_df_updated[(bb_df_updated.frame_number == counter)]
+
+        if len(bb_boxes.index) > 0:
+            for row_number in range(len(bb_boxes.index)):
+                bb_boxes = bb_boxes.astype({"orig_xmin": 'int',
+                                            "orig_ymin": 'int',
+                                            "orig_xmax" : 'int',
+                                            "orig_ymax" : 'int'})
+                o_xmin = bb_boxes.iloc[row_number, 7]
+                o_ymin = bb_boxes.iloc[row_number, 8]
+                o_xmax = bb_boxes.iloc[row_number, 9]
+                o_ymax = bb_boxes.iloc[row_number, 10]
+                # Set the bounding box area to NaN in the heatmap
+                heatmap_img[o_xmin:o_xmax, o_ymin:o_ymax] = np.nan
+
+        heatmap_img = heatmap_img.astype('float32') # Reduce heatmap size
+        heatmaps_per_video.append(heatmap_img)
+
+        if counter % 100 == 0 and counter != 0:
+            heatmaps_ave.append(np.nanmean(heatmaps_per_video, axis=0))
+            heatmaps_per_video = []
+            print("counter 100 utan" + str(counter))
+
+        if counter  == len(cap)-1:
+            heatmaps_ave.append(np.nanmean(heatmaps_per_video, axis=0))
+
+        counter += 1
+
+    # Average heatmaps considering NaNs
+    heatmaps_per_video_average = np.nanmean(heatmaps_ave, axis=0)
+
+    # Save the averaged heatmap
+    np.save(output_path + only_vidname + r'_heatmaps_per_video',
+            heatmaps_per_video_average, allow_pickle=True, fix_imports=True)
+    del(heatmaps_per_video_average)
+
+# Saved .npy files source: https://figshare.com/articles/dataset/Heatmaps_the_average_similarity_from_the_OFC_/26299642
