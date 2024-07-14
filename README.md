@@ -11,3 +11,5 @@ Bumblebee detection using our deep-learning model:
 - on Lotus creticus: https://www.youtube.com/watch?v=zUV7DKQ0N08
 - on Persicaria: https://www.youtube.com/watch?v=SZiJk3QstGw
 - on Trifolium: https://www.youtube.com/watch?v=n9aMfsKr9IM
+
+Heatmaps - the average similarity from the OFC (.npy files): 10.6084/m9.figshare.26299642
