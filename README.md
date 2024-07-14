@@ -12,4 +12,4 @@ Bumblebee detection using our deep-learning model:
 - on Persicaria: https://www.youtube.com/watch?v=SZiJk3QstGw
 - on Trifolium: https://www.youtube.com/watch?v=n9aMfsKr9IM
 
-Heatmaps - the average similarity from the OFC (.npy files): 10.6084/m9.figshare.26299642
+Heatmaps - the average similarity from the OFC (.npy files): https://figshare.com/articles/dataset/Heatmaps_the_average_similarity_from_the_OFC_/26299642
