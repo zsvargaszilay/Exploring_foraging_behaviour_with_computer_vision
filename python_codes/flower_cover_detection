@@ -1,0 +1,154 @@
+import numpy as np
+import os
+import pandas as pd
+import cv2
+
+###########################
+# INPUT
+# Cropped images .jpg files
+# CSV file for calibration data (containing information about the quadrats and flower types.)
+
+# OUTPUT
+# 'percentage_flower_density.csv' containing the percentage of flower coverage for each video.
+# Images with contours of detected flowers
+
+###########################
+#DEFINITIONS
+# Convert HSB to HSV
+def HSB_to_HSV(HSB_lower, HSB_upper):
+    low_H_in, low_S, low_B = HSB_lower
+    upper_H_in, upper_S, upper_B = HSB_upper
+    # Convert Hue from 0-255 range to 0-179 range (OpenCV scale)
+    low_H_out = round((low_H_in / 255.0) * 179)
+    upper_H_out = round((upper_H_in / 255.0) * 179)
+
+    low_HSV = (low_H_out, low_S, low_B)
+    upper_HSV = (upper_H_out, upper_S, upper_B)
+    
+    return  [low_HSV, upper_HSV]
+
+def merge_contours(contours, size_threshold): # Merge contours based on a size threshold
+    # Create a blank mask to draw contours
+    mask = np.zeros_like(image[:, :, 0])
+
+    for contour in contours:
+        # Only draw contours that are smaller than the threshold
+        if cv2.contourArea(contour) < size_threshold:
+            cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
+
+    # Find the new contours in the mask where small contours are merged
+    merged_contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Add large contours directly to the merged list
+    for contour in contours:
+        if cv2.contourArea(contour) >= size_threshold:
+            merged_contours.append(contour)
+
+        return merged_contours
+
+###########################x
+# Set the working directory path
+path = '.../'
+os.chdir(path)
+# Path to cropped images
+im_path = '.../Kvadrats_croped_images_jpg/'
+
+# List all JPG files in the directory
+jpg_files = [file for file in os.listdir(im_path) if file.endswith('.jpg')]
+
+# Read CSV files for calibration data
+kvadrat_calibration = pd.read_csv(".../Calibration_with_imageJ_kvadrat.csv", sep=";")
+
+# Define HSB ranges from ImageJ for three plant species
+HSB_lotus_lower = (11, 120, 160)
+HSB_lotus_upper = (42, 255, 255)
+
+HSB_trifolium_lower = (85, 0, 186)
+HSB_trifolium_upper = (255, 247, 255)
+
+HSB_persicaria_lower = (140, 0, 40)
+HSB_persicaria_upper = (255, 140, 255)
+
+# Convert HSB ranges to HSV ranges
+lotus_HSV_values = HSB_to_HSV(HSB_lotus_lower, HSB_lotus_upper)
+trifolium_HSV_values = HSB_to_HSV(HSB_trifolium_lower, HSB_trifolium_upper)
+persicaria_HSV_values = HSB_to_HSV(HSB_persicaria_lower, HSB_persicaria_upper)
+
+percentage_flower_density_per_video = []
+
+for one_jpg in jpg_files: # Iterate through each JPG file
+
+    contour_pixels = [] # Store contour pixel coordinates
+
+    one_jpg_file_name = one_jpg.rsplit('.', maxsplit=1)[0]
+    image = cv2.imread(im_path + one_jpg) # Read image in BGR format
+    hsvimage = cv2.cvtColor(image, cv2.COLOR_BGR2HSV) # Convert image to HSV
+
+    total_pixels = image.shape[0] * image.shape[1] # Total number of pixels in the image
+
+    # Get the flower type from calibration data
+    flower_type = kvadrat_calibration.loc[kvadrat_calibration.video_name == str(one_jpg_file_name), "flower"]
+    flower_type = flower_type.iloc[0]
+
+    # Set HSV range based on flower type
+    if flower_type == "lotus":
+        lower =  np.array(lotus_HSV_values[0])
+        upper =  np.array(lotus_HSV_values[1])
+
+    elif flower_type == "trifolium":
+        lower =  np.array(trifolium_HSV_values[0])
+        upper =  np.array(trifolium_HSV_values[1])
+
+    elif flower_type == "persicaria":
+        lower =  np.array(persicaria_HSV_values[0])
+        upper =  np.array(persicaria_HSV_values[1])
+
+    # Create a mask based on the HSV range # probaltuk BGR-el de nem ment, ezért visszatertünk a HSV-hez
+    mask = cv2.inRange(hsvimage, lower, upper)
+
+    mask_area = cv2.countNonZero(mask) # Count non-zero pixels in the mask
+
+    # Find contours in the mask
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+
+    # Define size threshold for merging small contours
+    size_threshold = 100000  # Adjust this value as needed
+
+    # Merge small contours
+    merged_contours = merge_contours(contours, size_threshold)
+
+    output_image = image.copy()
+
+    # Draw merged contours on the output image
+    for contour in merged_contours:
+        # Draw polygon
+        cv2.drawContours(output_image, [contour], 0, (0, 0, 255), 2)
+
+    # Calculate percentage of flower density
+    percentage_inside = (mask_area / total_pixels) * 100
+    print(percentage_inside)
+
+    # Append results to the list
+    percentage_flower_density_per_video.append([one_jpg_file_name,
+                                                lower[0], lower[1], lower[2],
+                                                upper[0], upper[1], upper[2],
+                                               total_pixels, mask_area,
+                                               percentage_inside,
+                                                flower_type])
+
+    # Save the output image with contours
+    output_path = path + 'output_HSV_' + one_jpg
+    cv2.imwrite(output_path, output_image)
+
+# Convert results to DataFrame and save as CSV
+percentage_flower_density_per_video = pd.DataFrame(percentage_flower_density_per_video,
+                                                   columns=['video_name',
+                                                            'H_lower', 'S_lower', 'V_lower',
+                                                            'H_upper', 'S_upper', 'V_upper',
+                                                            'pixs_total',
+                                                            'pixs_mask_area',
+                                                            'percentage_flower_density',
+                                                            'flower_type'])
+
+percentage_flower_density_per_video.to_csv(path + r'percentage_flower_density.csv', index=False)
