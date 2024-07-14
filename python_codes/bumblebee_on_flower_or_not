@@ -35,7 +35,7 @@ flower_or_not_dataframe = []
 for empty_frame in empty_frames:
     # Read the image and convert to HSV
     current_empty_frame = cv2.imread(empty_frames_path + empty_frame)
-    current_empty_frame = cv2.cvtColor(current_empty_frame, cv2.COLOR_BGR2HSV) #. A cv2.imread függvény nem fogadja el a cv2.COLOR_BGR2HSV paramétert, mert ez a paraméter nem tartozik ehhez a függvényhíváshoz.
+    current_empty_frame = cv2.cvtColor(current_empty_frame, cv2.COLOR_BGR2HSV)
 
     video_name = empty_frame[:8] # Extract video name from the image filename
 
@@ -60,7 +60,7 @@ for empty_frame in empty_frames:
 
     # Read bounding box data for the video
     bb_df = pd.read_csv(bb_path + str(video_name) + "_final_bb.csv")
-    bb_df['video_name'] = bb_df['video_name'].str[:-4]  # leszedjük az .mp4 kiterjesztest
+    bb_df['video_name'] = bb_df['video_name'].str[:-4] 
 
     # Merge bounding box data with quadrat data
     combined_df = pd.merge(bb_df, kvadrat_calibration, how='inner', on='video_name')
