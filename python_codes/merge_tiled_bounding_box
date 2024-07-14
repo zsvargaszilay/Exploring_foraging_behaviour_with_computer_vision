@@ -1,0 +1,106 @@
+import itertools
+import math
+import pandas as pd
+import os
+
+# INPUT
+# CSV files with bounding boxes
+# Calibration data file 'Calibration_with_imageJ_3.csv'
+
+# OUTPUT
+# CSV files with final bounding boxes 'video_name'+_final_bb.csv'
+
+#############
+#DEFINITIONS
+# Calculate bumblebee size and close distance in pixels
+def bombus_size_on_video(mean_pix_per_1mm, bombus_size=15):
+    bombus_pixel_size = bombus_size * mean_pix_per_1mm
+    close_dist = bombus_pixel_size/2
+    return bombus_pixel_size, close_dist # Calculate bumblebee average length on the videos
+
+def merge_boxes(box1, box2): # Merge two bounding boxes
+    return [min(box1[0], box2[0]),
+         min(box1[1], box2[1]),
+         max(box1[2], box2[2]),
+         max(box1[3], box2[3])]
+
+#############
+# post-processing
+path = "I:/Work/Bombus_work/"
+os.chdir(path)
+# Get a list of all CSV files in the input directory
+dir = ".../Bounding_box_data/"
+out_path = ".../Final_bb_csv/"
+csv_files = [file for file in os.listdir(dir) if file.endswith('.csv')]
+print(csv_files)
+
+# Load pixel calibration data per video
+calibration = pd.read_csv(".../Calibration_with_imageJ_3.csv", sep=";")
+
+# Process each CSV file
+for csv_file in csv_files:
+    # Read bounding box data from CSV file
+    df = pd.read_csv(dir + csv_file)
+    new_df = pd.DataFrame(columns = df.columns)
+    csv_file_name = csv_file.rsplit('.', maxsplit=1)[0]
+
+    # Get confidence and mean pixel values for the video
+    conf = float(calibration.loc[calibration.video_name == csv_file_name, "conf"])
+    mean_pix = calibration.loc[calibration.video_name == csv_file_name, "mean_pix_per_1mm"]
+
+    bombus_pixel_size, close_dist = bombus_size_on_video(mean_pix)
+
+    # Filter bounding boxes by confidence value
+    filtered_df = df.loc[df.confidence >= conf]
+
+    # Group bounding boxes by frame number
+    group_by_frame = filtered_df.groupby('frame_number').size()
+    group_by_frame = pd.Series.to_frame(group_by_frame).reset_index() # bacause the frame number can repeat
+
+    # Get frames with only ONE bounding box
+    filtered_frame_number = group_by_frame.loc[group_by_frame.iloc[:, 1] == 1, 'frame_number']
+    filtered_frame_number =  pd.Series.to_list(filtered_frame_number)
+
+    one_row_frames = filtered_df.loc[filtered_df["frame_number"].isin(filtered_frame_number), :]
+    new_df = new_df.append(one_row_frames, ignore_index=True)
+
+    # Get frames with MULTIPLE bounding boxes
+    multi_row_frames = filtered_df.loc[~filtered_df["frame_number"].isin(filtered_frame_number), :]
+
+    for frame in multi_row_frames.frame_number.unique():
+        uniform_frame = multi_row_frames.loc[multi_row_frames.frame_number == frame, :]
+
+        # Generate all combinations of bounding box pairs within the same frame
+        row_combinations = list(itertools.combinations(uniform_frame.index, 2))
+
+        for combi in row_combinations:
+
+            A = uniform_frame.loc[combi[0], ["center_x", "center_y"]]
+            B = uniform_frame.loc[combi[1], ["center_x", "center_y"]]
+
+            # Calculate Euclidean distance between the centers of two bounding boxes
+            E_dist = math.dist(A, B)
+            if E_dist <= float(close_dist):
+                box1 = list(uniform_frame.loc[combi[0], ["orig_xmin", "orig_ymin",
+                                                     "orig_xmax", "orig_ymax"]])
+                box2 = list(uniform_frame.loc[combi[1], ["orig_xmin", "orig_ymin",
+                                                     "orig_xmax", "orig_ymax"]])
+                new_box = merge_boxes(box1, box2) # new box's 4 values in a list
+
+                # Create a new row for the merged bounding box
+                empty_line = pd.DataFrame(columns = uniform_frame.columns)
+                empty_line.loc[0, ['orig_xmin', 'orig_ymin',
+                                   'orig_xmax', 'orig_ymax']] = new_box
+                empty_line.loc[0, "center_x"] = (empty_line.loc[0, "orig_xmin"]
+                                                 + empty_line.loc[0, "orig_xmax"])/2
+                empty_line.loc[0, "center_y"] = (empty_line.loc[0, "orig_ymin"]
+                                                 + empty_line.loc[0, "orig_ymax"]) / 2
+                empty_line.loc[0, "video_name"] = csv_file_name
+                empty_line.loc[0, "frame_number"] = frame
+
+                new_df = new_df.append(empty_line, ignore_index = True) # put the new box to the new df
+            else:
+                new_df = new_df.append(uniform_frame.loc[combi, :], ignore_index = True) # box without modificaton 
+
+    # Save the final bounding boxes to a new CSV file
+    new_df.to_csv(out_path + csv_file_name + r'_final_bb.csv', index=False)
