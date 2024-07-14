@@ -1,0 +1,175 @@
+import os
+import cv2
+import numpy as np
+import pandas as pd
+import ffmpegcv
+
+# INPUT
+# Original videos in mp4 format.
+# csv file: 'Calibration_with_imageJ_kvadrat.csv': Contains calibration data for quadrats.
+# csv file: 'percentage_flower_density.csv': Contains HSV color data for flowers.
+
+# OUTPUT
+# A CSV file OFC_of_flowers.csv containing average and median HSV and BGR values
+# for each video, based on 10 randomly selected frames.
+
+#############
+#DEFINITIONS
+def merge_contours(contours, size_threshold): # Function to merge small contours
+    # Create a blank mask to draw contours
+    mask = np.zeros_like(hsvimage[:, :, 0])
+
+    for contour in contours:
+        # Only draw contours that are smaller than the threshold
+        if cv2.contourArea(contour) < size_threshold:
+            cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
+
+    # Find the new contours in the mask where small contours are merged
+    merged_contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                          cv2.CHAIN_APPROX_SIMPLE)
+
+    # Add large contours directly to the merged list
+    for contour in contours:
+        if cv2.contourArea(contour) >= size_threshold:
+            merged_contours.append(contour)
+
+        return merged_contours
+# the original source of def: https://stackoverflow.com/questions/37743621/thersholding-limits-on-hsv-image-in-python
+
+def average_hsv_values(image, mask): # Function to calculate average HSV values within a mask
+    # Select pixels that are within the mask area
+    hsv_values = image[mask > 0]
+    # Calculate the average HSV values
+    average_hsv = np.mean(hsv_values, axis=0)
+
+    return average_hsv
+
+def HSV_to_BGR(HSV): # Function to convert HSV to BGR color space
+    H, S, V = HSV
+
+    # Create a numpy array containing the HSV values
+    hsv = np.uint8([[[H, S, V]]])
+
+    # Convert HSV to BGR using OpenCV
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+    # Return the BGR values (Blue, Green, Red) visszaadása
+    B, G, R = bgr[0][0]
+
+    return [R, G, B] # Return the RGB values
+
+#############
+# Set the working directory path
+path = '.../'
+os.chdir(path)
+dir = '.../' # Directory containing the videos
+
+# Load calibration data
+kvadrat_calibration = pd.read_csv(".../Calibration_with_imageJ_kvadrat.csv", sep=";")
+# Load HSV color data
+HSV_colour_datas = pd.read_csv(".../Flower_density_based_on_HSV/percentage_flower_density.csv", sep=",")
+
+allfiles = os.listdir(dir) # List all files in the video directory
+videos = [fname for fname in allfiles if fname.endswith('.mp4')] # Filter for mp4 videos
+# List of specific video names to process
+all_video_name = ['GX010097.mp4', 'GX010098.mp4', 'GX010099.mp4', 'GX010100.mp4', 'GX010101.mp4',
+                  'GX010102.mp4', 'GX010103.mp4', 'GX010104.mp4', 'GX010105.mp4', 'GX010106.mp4',
+                  'GX010107.mp4', 'GX010216.mp4', 'GX010219.mp4', 'GX010222.mp4', 'GX010224.mp4',
+                  'GX010236.mp4', 'GX010237.mp4', 'GX010238.mp4', 'GX010239.mp4', 'GX010241.mp4',
+                  'GX010242.mp4', 'GX010243.mp4', 'GX010244.mp4', 'GX010245.mp4', 'GX010247.mp4',
+                  'GX010248.mp4', 'GX010249.mp4', 'GX010250.mp4', 'GX010251.mp4', 'GX010253.mp4',
+                  'GX010254.mp4', 'GX010255.mp4', 'GX010257.mp4', 'GX010896.mp4', 'GX010897.mp4',
+                  'GX010900.mp4', 'GX010901.mp4', 'GX010902.mp4', 'GX010904.mp4', 'GX010906.mp4',
+                  'GX010908.mp4', 'GX010912.mp4', 'GX010913.mp4', 'GX010915.mp4', 'GX010916.mp4',
+                  'GX010917.mp4', 'GX010918.mp4', 'GX010921.mp4']
+
+ofc = [] # Empty list to store optimal flower color data
+
+for videoname in videos: # Process each video
+    if videoname in all_video_name:
+        video_wpath = dir + videoname
+        only_vidname = videoname.rsplit('.', maxsplit=1)[0]
+        cap = ffmpegcv.VideoCapture(video_wpath)
+
+        # Generate 10 random frame numbers
+        random_numbers = np.random.choice(range(1000), size=10, replace=False)
+        random_numbers = sorted(random_numbers)
+        print(random_numbers)
+        current_random_index = 0
+        counter = 0
+
+        # Process frames until all random frames are processed
+        while current_random_index < len(random_numbers):
+            ret, img = cap.read()
+            if not ret:
+                break
+
+            #if counter in random_number: # 10 random frame from the all frame
+            if counter == random_numbers[current_random_index]:
+                print(counter)
+                #imr = np.array(img, dtype=np.uint8)
+                hsvimage = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+                HSV_colours = HSV_colour_datas.loc[
+                    HSV_colour_datas.video_name == only_vidname, ["H_lower", "S_lower",
+                                                                  "V_lower", "H_upper",
+                                                                  "S_upper", "V_upper"]]
+
+                H_lower, S_lower, V_lower, H_upper, S_upper, V_upper = HSV_colours.iloc[0]
+
+                # Get the quadrat size
+                kvadrat_datas = kvadrat_calibration.loc[
+                    kvadrat_calibration.video_name == only_vidname, ["kvadrat_x1", "kvadrat_y1",
+                                                                     "kvadrat_x2", "kvadrat_y2",
+                                                                     "flower"]]
+
+                kvadrat_x1, kvadrat_y1, kvadrat_x2, kvadrat_y2, flower = kvadrat_datas.iloc[0]
+                # Crop the image to the quadrat size
+                hsvimage = hsvimage[kvadrat_y1:kvadrat_y2, kvadrat_x1:kvadrat_x2]
+
+                flower_type = kvadrat_calibration.loc[kvadrat_calibration.video_name == str(only_vidname), "flower"]
+                flower_type = flower_type.iloc[0]
+
+                lower = np.array([H_lower, S_lower, V_lower])
+                upper = np.array([H_upper, S_upper, V_upper])
+
+                # Create a binary mask based on the HSV range
+                mask = cv2.inRange(hsvimage, lower, upper)
+
+                mask_area = cv2.countNonZero(mask)
+
+                # Selected masked areas
+                masked_pixels = hsvimage[mask > 0]
+
+                # Calculate average and median HSV values in the masked area
+                average_hsv = np.mean(masked_pixels, axis=0)
+                median_hsv = np.median(masked_pixels, axis=0)
+
+                average_hsv_in = (average_hsv[0], average_hsv[1], average_hsv[2])
+                median_hsv_in = (median_hsv[0], median_hsv[1], median_hsv[2])
+
+                # Convert HSV values to BGR - output: RGB values
+                aevrage_hsv_in_rgb = HSV_to_BGR(average_hsv_in)
+                median_hsv_in_rgb = HSV_to_BGR(median_hsv_in)
+
+                # Append data to the list
+                ofc.append([only_vidname, counter,
+                            average_hsv[0], average_hsv[1], average_hsv[2],
+                            median_hsv[0], median_hsv[1], median_hsv[2],
+                            aevrage_hsv_in_rgb[0], aevrage_hsv_in_rgb[1], aevrage_hsv_in_rgb[2],
+                            median_hsv_in_rgb[0], median_hsv_in_rgb[1], median_hsv_in_rgb[2],
+                            flower_type])
+
+                current_random_index += 1
+
+            counter += 1
+
+    else:
+        print(f"{videoname} is not in all_video_name list")
+
+# Convert the list to a DataFrame and save it to a CSV file
+ofc = pd.DataFrame(ofc, columns=['video_name', 'frame_number', 'mean_H', 'mean_S', 'mean_V',
+                                 'median_H', 'median_S', 'median_V', 'mean_R', 'mean_G', 'mean_B',
+                                 'median_R', 'median_G', 'median_B', 'flower_type'])
+
+ofc.to_csv(path + r'OFC_of_flowers.csv', index=False)
