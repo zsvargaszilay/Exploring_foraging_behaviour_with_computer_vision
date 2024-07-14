@@ -1,0 +1,128 @@
+import os
+import numpy as np
+import pandas as pd
+import cv2
+
+#####################
+# INPUT
+# Empty frame per video .jpg
+# 'Calibration_with_imageJ_kvadrat.csv' containing quadrat information.
+# 'percentage_flower_density.csv' containing HSV color ranges for the videos.
+# Bounding box CSV files
+
+# OUTPUT
+# 'bumblebees_on_flower_or_not.csv' containing information on whether the bounding box area is considered to be on a flower.
+
+#####################
+# Set the working directory path
+path = '.../'
+os.chdir(path)
+# Paths to bounding box data, empty frames, and output directories
+bb_path = ".../All_final_bb_csv/"
+empty_frames_path = '.../One_empty_frame_per_video/'
+allfiles = os.listdir(empty_frames_path)
+empty_frames = [fname for fname in allfiles if fname.endswith('.jpg')]
+output_path = '.../'
+
+# Read the calibration CSV file and the HSV color data CSV file
+kvadrat_calibration = pd.read_csv(".../Calibration_with_imageJ_kvadrat.csv", sep=";")
+HSV_colour_datas = pd.read_csv(".../percentage_flower_density.csv", sep=",")
+
+# Initialize list to store results
+flower_or_not_dataframe = []
+
+# Process each empty frame image
+for empty_frame in empty_frames:
+    # Read the image and convert to HSV
+    current_empty_frame = cv2.imread(empty_frames_path + empty_frame)
+    current_empty_frame = cv2.cvtColor(current_empty_frame, cv2.COLOR_BGR2HSV) #. A cv2.imread függvény nem fogadja el a cv2.COLOR_BGR2HSV paramétert, mert ez a paraméter nem tartozik ehhez a függvényhíváshoz.
+
+    video_name = empty_frame[:8] # Extract video name from the image filename
+
+    # Get HSV color ranges for the video
+    HSV_colours = HSV_colour_datas.loc[
+        HSV_colour_datas.video_name == video_name, ["H_lower", "S_lower",
+                                                      "V_lower", "H_upper",
+                                                      "S_upper", "V_upper"]]
+
+    H_lower, S_lower, V_lower, H_upper, S_upper, V_upper = HSV_colours.iloc[0]
+    # Define lower and upper bounds for the HSV mask
+    lower = np.array([H_lower, S_lower, V_lower])
+    upper = np.array([H_upper, S_upper, V_upper])
+
+    # Get quadrat data for the video
+    kvadrat_datas = kvadrat_calibration.loc[
+        kvadrat_calibration.video_name == video_name, ["kvadrat_x1", "kvadrat_y1",
+                                                       "kvadrat_x2", "kvadrat_y2",
+                                                       "flower"]]
+
+    kvadrat_x1, kvadrat_y1, kvadrat_x2, kvadrat_y2, flower = kvadrat_datas.iloc[0]
+
+    # Read bounding box data for the video
+    bb_df = pd.read_csv(bb_path + str(video_name) + "_final_bb.csv")
+    bb_df['video_name'] = bb_df['video_name'].str[:-4]  # leszedjük az .mp4 kiterjesztest
+
+    # Merge bounding box data with quadrat data
+    combined_df = pd.merge(bb_df, kvadrat_calibration, how='inner', on='video_name')
+
+    # Filter bounding boxes within the quadrat (60x60)
+    bb_df_updated = combined_df[
+        (combined_df['center_x'] >= combined_df['kvadrat_x1']) &
+        (combined_df['center_x'] <= combined_df['kvadrat_x2']) &
+        (combined_df['center_y'] >= combined_df['kvadrat_y1']) &
+        (combined_df['center_y'] <= combined_df['kvadrat_y2'])
+        ]
+
+    bb_df_updated = bb_df_updated.astype({"orig_xmin": 'int',
+                                          "orig_ymin": 'int',
+                                          "orig_xmax": 'int',
+                                          "orig_ymax": 'int'})
+
+    # Process each bounding box
+    for row_number in range(len(bb_df_updated.index)):
+        # Get the bounding box coordinates
+        o_xmin = bb_df_updated.iloc[row_number, 7]
+        o_ymin = bb_df_updated.iloc[row_number, 8]
+        o_xmax = bb_df_updated.iloc[row_number, 9]
+        o_ymax = bb_df_updated.iloc[row_number, 10]
+
+        # Crop the bounding box area from the image
+        cropped_bb_area = current_empty_frame[o_ymin:o_ymax, o_xmin:o_xmax]
+        height, width = cropped_bb_area.shape[:2]
+        total_pixels = height * width
+
+        # Create a mask for the flower color in the cropped area
+        mask = cv2.inRange(cropped_bb_area, lower, upper)
+        mask_area = cv2.countNonZero(mask)
+
+        # Calculate the percentage of flower pixels in the bounding box area
+        flower_percentage_under_bb = round((mask_area/total_pixels)*100)
+
+        # Determine if the bounding box area is considered to be on a flower
+        if flower_percentage_under_bb >= 20: # treshold
+            flower_or_not = "Yes" # was on flower
+        else:
+            flower_or_not = "No" # was not on flower
+
+        # Create a unique ID for the bounding box
+        bb_ID = str(video_name) + '_' + str(bb_df_updated.iloc[row_number, 14]) + '_' + str(row_number)
+
+        # Append the results to the dataframe
+        flower_or_not_dataframe.append([bb_ID,
+                                        video_name,
+                                        bb_df_updated.iloc[row_number, 14], #frame number
+                                        total_pixels,
+                                        mask_area,
+                                        flower_percentage_under_bb,
+                                        flower_or_not])
+
+# Convert results to a DataFrame
+flower_or_not_dataframe = pd.DataFrame(flower_or_not_dataframe,
+                                       columns=['bb_ID', 'video_name',
+                                                'frame_number', 'total_bb_pixels',
+                                                'total_mask_area_pixels',
+                                                'flower_percentage_under_bb',
+                                                'flower_or_not'])
+
+# Save the results to a CSV file
+flower_or_not_dataframe.to_csv(output_path + r'bumblebees_on_flower_or_not.csv', index=False)
