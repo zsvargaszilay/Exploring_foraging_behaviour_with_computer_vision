@@ -1,0 +1,195 @@
+library(dplyr)
+library(readr)
+library(purrr)
+# for modelling
+library(sandwich)
+library(lmtest)
+library(lme4)
+library(lmerTest)
+# for visualization
+library(ggplot2)
+
+# Read the data from CSV file containing the data about whether bumblebees are on flowers or not
+On_flower_or_not <- read.csv(".../bumblebees_on_flower_or_not.csv")
+
+number_of_bb_per_frame <- On_flower_or_not %>%
+  group_by(video_name, frame_number) %>%
+  summarise(number_of_bb_per_frame = n())
+
+number_of_bb_per_frame_on_flower <- On_flower_or_not %>%
+  filter(flower_or_not == "Yes") %>%
+  group_by(video_name, frame_number) %>%
+  summarise(number_of_bb_per_frame_on_flower = n())
+
+# Merge the two dataframes
+merged_df <- full_join(number_of_bb_per_frame, number_of_bb_per_frame_on_flower, 
+                       by = c("video_name", "frame_number"))
+
+# Replace NA values in the number_of_bb_per_frame_on_flower with 0
+merged_df <- merged_df %>%
+  mutate(number_of_bb_per_frame_on_flower = ifelse(is.na(number_of_bb_per_frame_on_flower), 0, number_of_bb_per_frame_on_flower))
+
+# Calculate the percentage of time bumblebees spend on flowers
+merged_df$arany <- (merged_df$number_of_bb_per_frame_on_flower/merged_df$number_of_bb_per_frame)*100
+
+# Compute the mean percentage of time spent on flowers for each video
+fourth_question_data <- merged_df %>%
+  group_by(video_name) %>%
+  summarise(fourth_data = mean(arany))
+
+# Read flower density data from CSV
+density_datas <- read.csv(".../percentage_flower_density.csv")
+
+# merge dataframes 
+fourth_question_data <- left_join(fourth_question_data, density_datas, by = "video_name")
+
+# Read additional random variables data from CSV
+First_question_data_full <- read.csv(".../For_first_question_data_full.csv", 
+                                     sep = ";", header = TRUE)
+
+# Extract relevant columns for random variables
+Random_variables_df <- First_question_data_full[, c("video_name", "month", 
+                                                    "part_of_day", "cloudyness", 
+                                                    "temperature", "wind", "hunidity", 
+                                                    "equivalent_noise_level", "location")]
+
+# Merge random variables data with the fourth_question_data dataframe
+fourth_question_data <- left_join(fourth_question_data, 
+                                  Random_variables_df, by = "video_name")
+
+# Define columns to be converted to factor type
+cols_to_factor <- c("flower_type", "month", "cloudyness", "wind")
+
+# Convert specified columns to factor type
+fourth_question_data[cols_to_factor] <- lapply(fourth_question_data[cols_to_factor], as.factor)
+
+######################################################################
+# MODELLING 
+
+# Fit a linear regression model
+lm_teszt <- lm(fourth_data ~ flower_type * percentage_flower_density, 
+               data = fourth_question_data)
+
+# Extract residuals from the linear regression model
+residuals <- resid(lm_teszt)
+
+# Perform the Goldfeld-Quandt test for heteroscedasticity
+gqtest(lm_teszt, order.by = ~flower_type * percentage_flower_density, 
+       data = fourth_question_data, 
+       fraction = 10) # fraction = discard roughly 20% of the total observations
+
+# Goldfeld-Quandt test
+# data:  lm_teszt
+# GQ = 2.5743, df1 = 13, df2 = 13, p-value = 0.05018
+# alternative hypothesis: variance increases from segment 1 to 2
+
+# Perform Shapiro-Wilk test for normality of residuals
+shapiro.test(residuals)
+# Shapiro-Wilk normality test
+# data:  residuals
+# W = 0.9765, p-value = 0.4426
+
+# Fit a linear mixed-effects model (LMM) including random effects for wind and temperature
+(fm1 <- lmer(fourth_data ~ flower_type * percentage_flower_density
+             + (1 | wind) + (1 |temperature), 
+             fourth_question_data))
+
+# Display the summary of the linear mixed-effects model
+summary(fm1)
+#boundary (singular) fit: see help('isSingular')
+
+# Compare AIC of linear model and mixed-effects model
+AIC(fm1,lm_teszt)
+# df      AIC
+# fm1      11 409.5922
+# lm_teszt  7 430.0611
+
+# Use bbmle package to compare models using AIC
+library(bbmle)
+bbmle::AICtab(fm1,lm_teszt)
+# dAIC df
+# fm1       0.0 11
+# lm_teszt 20.5 7 
+
+# Perform ANOVA to compare the linear model and the mixed-effects model
+anova(fm1, lm_teszt)
+# Data: fourth_question_data
+# Models:
+#   lm_teszt: fourth_data ~ flower_type * percentage_flower_density
+# fm1: fourth_data ~ flower_type * percentage_flower_density + (1 | wind) + (1 | temperature)
+# npar    AIC    BIC  logLik deviance Chisq Df Pr(>Chisq)
+# lm_teszt    7 430.06 443.16 -208.03   416.06                    
+# fm1         9 434.06 450.90 -208.03   416.06     0  2          1
+
+summary(lm_teszt)
+# Call:
+#   lm(formula = fourth_data ~ flower_type * percentage_flower_density, 
+#      data = fourth_question_data)
+# 
+# Residuals:
+#   Min      1Q  Median      3Q     Max 
+# -32.716 -12.454  -0.390   8.368  52.641 
+# 
+# Coefficients:
+#   Estimate Std. Error t value Pr(>|t|)  
+# (Intercept)                                       30.861     11.777   2.620   0.0122 *
+#   flower_typepersicaria                            -32.511     21.817  -1.490   0.1437  
+# flower_typetrifolium                              19.119     25.854   0.739   0.4637  
+# percentage_flower_density                          0.313      2.368   0.132   0.8955  
+# flower_typepersicaria:percentage_flower_density    8.386      6.615   1.268   0.2119  
+# flower_typetrifolium:percentage_flower_density    -3.084      4.878  -0.632   0.5307  
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 19.72 on 42 degrees of freedom
+# Multiple R-squared:  0.1191,	Adjusted R-squared:  0.01425 
+# F-statistic: 1.136 on 5 and 42 DF,  p-value: 0.3566
+
+
+# Return to linear model due to singularity of the mixed model
+# Use robust standard errors with the linear model
+coeftest(lm_teszt, vcov = vcovHC(lm_teszt, type = "HC1"))
+
+# t test of coefficients:
+#   
+#   Estimate Std. Error t value Pr(>|t|)  
+# (Intercept)                                      30.86065   18.87458  1.6350  0.10952  
+# flower_typepersicaria                           -32.51083   20.56146 -1.5812  0.12135  
+# flower_typetrifolium                             19.11888   35.13681  0.5441  0.58923  
+# percentage_flower_density                         0.31299    3.26374  0.0959  0.92406  
+# flower_typepersicaria:percentage_flower_density   8.38547    4.10440  2.0430  0.04736 *
+#   flower_typetrifolium:percentage_flower_density   -3.08413    6.38250 -0.4832  0.63145  
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+
+######################################################################
+# VISUALIZATION
+
+# Define labels for flower types
+flower_type_labels <- c(lotus = "Lotus", trifolium = "Trifolium", persicaria = "Persicaria")
+
+
+plot_for_fourth_question <- ggplot(data = fourth_question_data, 
+                                   aes(x = percentage_flower_density,
+                                       y = fourth_data)) +
+  geom_point(size = 3, shape = 21, fill = "lightgreen", 
+             color = "black") +
+  geom_smooth(method = "lm", se = TRUE, color = "salmon", 
+              linetype = "dashed") + 
+  labs(x = "Flower cover (%)", 
+       y = "Percentage of 'bumblebee-time'\n spent on flowers (%)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "bottom"
+  ) +
+  facet_wrap(~ flower_type, ncol = 3, scales = "free_x",
+             labeller = labeller(flower_type = flower_type_labels))
+
+# Save the plot as a PDF file
+#ggsave(filename = "I:/Work/Bombus_work/Calculated_data/Figures/plot_for_fourth_question.pdf", 
+       #plot = plot_for_fourth_question, 
+       #width = 10, height = 5, dpi = 300)
