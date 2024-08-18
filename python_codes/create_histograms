@@ -1,3 +1,4 @@
+
 import pandas as pd
 import os
 import numpy as np
@@ -6,6 +7,12 @@ import matplotlib.colors as mcolors
 #from pandas import unique
 from scipy.stats import gaussian_kde
 
+# OUTPUT
+# Histograms of the frequency of colour deviations from the OFC for both areas on the heatmap where bounding boxes (i.e. bumblebees) were present 
+# and from the whole heatmap (full quadrat). 
+
+#############
+# DEFINITIONS
 # Function to calculate the HSV distance between two colors
 def hsv_distance(colour_to, colour_from):
     # Extracting HSV values
@@ -23,6 +30,8 @@ def hsv_distance(colour_to, colour_from):
     dist = np.sqrt(hue_diff ** 2 + sat_diff ** 2 + val_diff ** 2)
     return dist
 
+#############
+# Set the working directory path
 # File paths and directories
 bb_path = ".../All_final_bb_csv/"
 his_path = ".../Histograms/"
