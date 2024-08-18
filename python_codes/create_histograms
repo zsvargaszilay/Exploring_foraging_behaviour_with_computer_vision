@@ -1,0 +1,163 @@
+import pandas as pd
+import os
+import numpy as np
+import matplotlib.pylab as plt
+import matplotlib.colors as mcolors
+#from pandas import unique
+from scipy.stats import gaussian_kde
+
+# Function to calculate the HSV distance between two colors
+def hsv_distance(colour_to, colour_from):
+    # Extracting HSV values
+    H1, S1, V1 = colour_to
+    H2, S2, V2 = colour_from
+
+    # Calculating hue difference considering the circular nature of the hue
+    hue_diff = np.minimum(np.abs(H1 - H2), 180 - np.abs(H1 - H2))
+
+    # Calculating saturation and brightness differences
+    sat_diff = np.abs(S1 - S2)
+    val_diff = np.abs(V1 - V2)
+
+    # Calculating the overall distance between the two colors
+    dist = np.sqrt(hue_diff ** 2 + sat_diff ** 2 + val_diff ** 2)
+    return dist
+
+# File paths and directories
+bb_path = ".../All_final_bb_csv/"
+his_path = ".../Histograms/"
+npy_path = ".../New_all_nyp_files/"
+
+# List of all heatmap files
+all_heatmaps_files = os.listdir(npy_path)
+
+# Loading calibration data for videos
+calibration = pd.read_csv(".../Calibration_with_imageJ_3.csv",  sep=";")
+kvadrat_calibration = pd.read_csv(".../Calibration_with_imageJ_kvadrat.csv", sep=";")
+
+# Loading flower colors for OFC (Optimal Flower Color)
+cols_4_OFC = pd.read_csv(".../OFC_of_flowers.csv", sep=";")
+                                  
+# Manually setting HSV ranges for each flower type
+lotus_range = [8, 120,	160,	29,	255,	255]
+persicaria_range = [98,	0,	40,	179,	140,	255]
+trifolium_range = [60,	0,	186,	179,	247,	255]
+
+# Storing upper and lower color bounds separately for each flower
+flower_colour_ranges = {'lotus': [lotus_range[:3],lotus_range[3:]],
+                        'persicaria': [persicaria_range[:3], persicaria_range[3:]], 
+                        'trifolium': [trifolium_range[:3], trifolium_range[3:]]}
+
+# Looping through each unique flower type in the calibration dataset
+for flower in pd.unique(calibration.flower):
+    # Lists to store the average bb and flower histogram values
+    average_bb = []
+    average_flower = []
+
+    # Filtering video names associated with the current flower type
+    flower_videos = calibration.loc[calibration.flower == str(flower), "video_name"]
+
+    # Looping through each video
+    for video in flower_videos:
+        # video = 'GX010249'
+        if video + "_heatmaps_per_video.npy" in all_heatmaps_files: # Check if heatmap data for this video is available
+            # Load the heatmap data for the current video
+            full_heatmap = np.load(npy_path + str(video) + "_heatmaps_per_video.npy")
+
+            # full image size = 5120 x 2880
+            # Quadrat dimensions from calibration data
+            kvadrat_datas = kvadrat_calibration.loc[
+                kvadrat_calibration.video_name == video, ["kvadrat_x1", "kvadrat_y1",
+                                                          "kvadrat_x2", "kvadrat_y2",
+                                                          "flower"]]
+
+            kvadrat_x1, kvadrat_y1, kvadrat_x2, kvadrat_y2, flower = kvadrat_datas.iloc[0]
+
+            # Load bumblebee bounding box data for the current video
+            bb_df = pd.read_csv(bb_path + str(video) + "_final_bb.csv")
+            
+            
+            # Filter the bumblebee bounding boxes to include only those within the quadrat area
+            bb_df = bb_df[
+                (bb_df['orig_xmin'] >= kvadrat_x1) &
+                (bb_df['orig_xmax'] <= kvadrat_x2) &
+                (bb_df['orig_ymin'] >= kvadrat_y1) &
+                (bb_df['orig_ymax'] <= kvadrat_y2)
+                ]
+
+            # Create a deep copy of the filtered dataframe to avoid altering the original data
+            bb_df_filtered = bb_df.copy(deep=True)
+
+            # Recalculating the bounding box coordinates relative to the quadrat
+            bb_df_filtered['kvad_xmin'] = bb_df_filtered['orig_xmin']-kvadrat_x1
+            bb_df_filtered['kvad_ymin'] = bb_df_filtered['orig_ymin']-kvadrat_y1
+            bb_df_filtered['kvad_xmax'] = bb_df_filtered['orig_xmax']-kvadrat_x1
+            bb_df_filtered['kvad_ymax'] = bb_df_filtered['orig_ymax']-kvadrat_y1
+
+            # Reset the index for the filtered dataframe
+            bb_df_filtered.reset_index(drop=True, inplace=True)
+
+            bb_histo_values = np.array([]) # Array to store histogram values for bumblebees
+
+            # Loop through each row of the filtered bumblebee dataframe
+            for row in range(len(bb_df_filtered.index)):
+                # Extracting bounding box coordinates
+                x_and_y = bb_df_filtered.loc[row, ["kvad_xmin", "kvad_ymin", "kvad_xmax", "kvad_ymax"]]
+                xmin, ymin, xmax, ymax = x_and_y.tolist()
+
+                # Flatten the heatmap values within the bounding box area
+                a = full_heatmap[int(ymin):int(ymax), int(xmin):int(xmax)].flatten()
+
+                # Append the histogram values for the current bounding box
+                bb_histo_values = np.append(bb_histo_values, a)
+
+            # Flatten the entire heatmap for random sampling
+            heatm_histo_values = full_heatmap.flatten()
+
+            # Randomly sample 100,000 values from the flattened heatmap for the flower
+            random_histo_values = np.random.choice(heatm_histo_values, 100000, replace=False)
+            average_flower = np.append(average_flower, random_histo_values)
+
+            # If the number of bumblebee histogram values exceeds 100,000, sample 100,000 values
+            if len(bb_histo_values) > 100000:
+                random_bb_for_df = np.random.choice(bb_histo_values, 100000, replace=False)
+                average_bb = np.append(average_bb, random_bb_for_df)
+
+            else:
+                # If fewer than 100,000 values, pad with NaNs to match the length of the flower data
+                added_nans = np.repeat(np.nan, len(random_histo_values)-len(bb_histo_values))
+                random_bb_for_df = np.append(bb_histo_values, added_nans)
+                average_bb = np.append(average_bb, random_bb_for_df)
+    
+    
+        else:
+            continue
+    # Create a DataFrame with the histogram values for both flowers and bb
+    dist = {'Flower': average_flower, 'Bubmlebee': average_bb}
+    dist = pandas.DataFrame(data=dist)
+    
+    # Calculating the Optimal Flower Color (OFC)
+    OFC_cols = cols_4_OFC.loc[
+                cols_4_OFC.flower_type == flower, ["median_H","median_S","median_V"]]
+    OFC = OFC_cols.mean(axis=0)
+    
+    # Getting color thresholds
+    range_L = flower_colour_ranges[flower][0]
+    range_U = flower_colour_ranges[flower][1]
+    
+    # calculating the mean distance between OFC and the lower and upper colour limits
+    # for marking where the accepted flower was on the histograms
+    flow_limit = np.mean([hsv_distance(range_L, OFC), hsv_distance(range_U, OFC)])
+
+    # Plotting the KDE and histogram
+    fig, ax = plt.subplots()
+    dist.plot.kde(ax=ax, legend=False, title= flower.capitalize(), color = ["lawngreen", "goldenrod"])
+    dist.plot.hist(density=True, ax=ax, alpha = 0.3, color = ["lawngreen", "goldenrod"])
+    plt.axvline(x = flow_limit, color = 'r', linestyle = "dashed")
+    ax.set_xlim([0, np.max(dist)])
+    ax.set_ylabel('Probability')
+    ax.grid(axis='y')
+
+    # Save the histogram plot as a PNG file
+    plt.savefig(his_path + flower + "_histogram.png", dpi=600)
+    plt.close(fig)
