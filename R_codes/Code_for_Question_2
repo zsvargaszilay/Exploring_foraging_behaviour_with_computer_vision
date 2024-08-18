@@ -1,0 +1,215 @@
+library(dplyr)
+library(readr)
+library(purrr)
+# for modelling
+library(sandwich)
+library(lmtest)
+library(lme4)
+library(lmerTest)
+# for visualization
+library(ggplot2)
+library(ggpubr)
+library(rstatix)
+library(dplyr) 
+#######################################
+
+# Load the dataset
+all_df_per_frame <- load(file = ".../all_bb_and_HSV_datas_df.rda")
+
+names(number_of_bb_per_frame)[names(number_of_bb_per_frame) == "row_count"] <- "all_bumblebee_per_frame"
+
+videos_summary <- number_of_bb_per_frame %>%
+  group_by(video_name, frame_number) %>%
+  summarize(s_frame_num = sum(all_bumblebee_per_frame)) %>%
+  group_by(video_name) %>% 
+  summarize(mean_bumblebee_num = mean(s_frame_num))
+
+First_question_data_full <- read.csv(".../For_first_question_data_full.csv", 
+                                     sep = ";", header = TRUE)
+
+Second_question_data_full <- left_join(First_question_data_full, videos_summary, 
+                                       by = "video_name")
+
+# Standardiseing  by flower density
+Second_question_data_full$data_for_second_question <- Second_question_data_full$mean_bumblebee_num/Second_question_data_full$percentage_flower_density
+
+# Convert specified columns to factors
+cols_to_factor <- c("flower_type", "cloudyness", "wind")
+
+Second_question_data_full[cols_to_factor] <- lapply(Second_question_data_full[cols_to_factor], as.factor)
+
+###################
+# MODELLING
+
+# Fit a linear model with the transformed response variable
+lm_teszt <- lm(data_for_second_question^-3 ~ flower_type, 
+               data = Second_question_data_full)
+
+# Display the summary of the linear model
+summary(lm_teszt)
+
+# Call:
+#   lm(formula = data_for_second_question^-3 ~ flower_type, data = Second_question_data_full)
+# 
+# Residuals:
+#   Min       1Q   Median       3Q      Max 
+# -103.714  -35.603   -4.336   35.556  110.278 
+# 
+# Coefficients:
+#   Estimate Std. Error t value Pr(>|t|)    
+# (Intercept)              75.45      14.12   5.345  2.9e-06 ***
+#   flower_typepersicaria   -56.16      19.96  -2.813  0.00725 ** 
+#   flower_typetrifolium     57.60      19.11   3.013  0.00423 ** 
+#   ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 54.67 on 45 degrees of freedom
+# Multiple R-squared:  0.4413,	Adjusted R-squared:  0.4164 
+# F-statistic: 17.77 on 2 and 45 DF,  p-value: 2.051e-06
+
+# Extract residuals from the linear model
+residuals <- resid(lm_teszt)
+
+# Perform the Goldfeld-Quandt test for heteroscedasticity
+gqtest(lm_teszt, order.by = ~flower_type, 
+       data = Second_question_data_full, 
+       fraction = 10) # fraction = discard roughly 20% of the total observations
+# Goldfeld-Quandt test
+# 
+# data:  lm_teszt
+# GQ = 1.3827, df1 = 16, df2 = 16, p-value = 0.2622
+# alternative hypothesis: variance increases from segment 1 to 2
+# No heteroscedasticity detected (p-value > 0.05)
+
+# Perform the Shapiro-Wilk test for normality of residuals
+shapiro.test(residuals)
+# Shapiro-Wilk normality test
+# 
+# data:  residuals
+# W = 0.97651, p-value = 0.4428
+# Residuals are normally distributed (p-value > 0.05)
+
+# Fit a linear mixed-effects model (LMM) considering random effects for wind and temperature
+
+(fm1 <- lmer(data_for_second_question^-3 ~ flower_type  
+             + (1 | wind) + (1 |temperature), 
+             Second_question_data_full))
+
+# Linear mixed model fit by REML ['lmerModLmerTest']
+# Formula: data_for_second_question^-3 ~ flower_type + (1 | wind) + (1 |  
+#                                                                      temperature)
+# Data: Second_question_data_full
+# REML criterion at convergence: 478.5588
+# Random effects:
+#   Groups      Name        Std.Dev.
+# temperature (Intercept) 62.66   
+# wind        (Intercept) 65.86   
+# Residual                37.29   
+# Number of obs: 48, groups:  temperature, 8; wind, 4
+# Fixed Effects:
+#   (Intercept)  flower_typepersicaria   flower_typetrifolium  
+# 1.359                 58.949                151.297  
+
+# Display the summary of the mixed model
+summary(fm1)
+# Linear mixed model fit by REML. t-tests use Satterthwaite's method ['lmerModLmerTest']
+# Formula: data_for_second_question^-3 ~ flower_type + (1 | wind) + (1 |      temperature)
+#    Data: Second_question_data_full
+# 
+# REML criterion at convergence: 478.6
+# 
+# Scaled residuals: 
+#      Min       1Q   Median       3Q      Max 
+# -1.98166 -0.23197 -0.04875  0.35175  2.59257 
+# 
+# Random effects:
+#  Groups      Name        Variance Std.Dev.
+#  temperature (Intercept) 3926     62.66   
+#  wind        (Intercept) 4338     65.86   
+#  Residual                1391     37.29   
+# Number of obs: 48, groups:  temperature, 8; wind, 4
+# 
+# Fixed effects:
+#                       Estimate Std. Error      df t value Pr(>|t|)  
+# (Intercept)              1.359     53.919   4.432   0.025   0.9810  
+# flower_typepersicaria   58.949     70.381   4.834   0.838   0.4417  
+# flower_typetrifolium   151.297     58.661   4.227   2.579   0.0581 .
+# ---
+# Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Correlation of Fixed Effects:
+#             (Intr) flwr_typp
+# flwr_typprs -0.568          
+# flwr_typtrf -0.533  0.485   
+
+# Compare the models using AIC (Akaike Information Criterion)
+AIC(fm1,lm_teszt)
+# df      AIC
+# fm1       6 490.5588
+# lm_teszt  4 525.2475
+
+# Compare the models using bbmle::AICtab
+library(bbmle)
+bbmle::AICtab(fm1,lm_teszt)
+# dAIC df
+# fm1       0.0 6 
+# lm_teszt 34.7 4 
+
+# Perform ANOVA to compare the linear model and the mixed model
+anova(fm1, lm_teszt)
+# refitting model(s) with ML (instead of REML)
+# Data: Second_question_data_full
+# Models:
+#   lm_teszt: data_for_second_question^-3 ~ flower_type
+# fm1: data_for_second_question^-3 ~ flower_type + (1 | wind) + (1 | temperature)
+# npar    AIC    BIC  logLik deviance  Chisq Df Pr(>Chisq)   
+# lm_teszt    4 525.25 532.73 -258.62   517.25                        
+# fm1         6 519.04 530.26 -253.52   507.04 10.212  2    0.00606 **
+#   ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+#summary(lm_teszt)
+
+#coeftest(lm_teszt, vcov = vcovHC(lm_teszt, type = "HC1"))
+
+######################################################################
+# VISUALIZATION
+
+# Define labels for the flower species
+flower_type_labels <- c(lotus = "Lotus", trifolium = "Trifolium", 
+                        persicaria = "Persicaria")
+
+# Define custom colors for each flower species
+custom_colors <- c("lotus" = "darkgoldenrod1", 
+                   "trifolium" = "darkmagenta", 
+                   "persicaria" = "darksalmon")
+
+# Define pairwise comparisons for the flower types
+my_comparisons <- list( c("lotus", "trifolium"), 
+                        c("trifolium", "persicaria"), 
+                        c("lotus","persicaria"))
+
+# Transform the data for visualization
+Second_question_data_full$data_for_second_question_qrt <- Second_question_data_full$data_for_second_question^-3
+
+plot_for_second_question <- ggboxplot(Second_question_data_full, x = "flower_type", 
+                                      y = "data_for_second_question_qrt", #data_for_second_question
+                                      color = "flower_type", 
+                                      add = "jitter",
+                                      add.params = list(size = 3),
+                                      size = 0.8)+
+  geom_hline(yintercept = mean(Second_question_data_full$data_for_second_question_qrt), 
+             linetype = 2)+ # Add a horizontal line representing the mean
+  stat_compare_means(method = "anova", label.y = 200) + # Add global p-value
+  stat_compare_means(comparisons = my_comparisons,
+                     method = "t.test") + # Add pairwise comparisons using t-tests
+  scale_color_manual(values = custom_colors) +
+  labs(x = "Plant genus", 
+       y = "Average number of bumblebees visiting flower patches\n at the same time (standardised for flower density)") +
+  scale_x_discrete(labels = flower_type_labels) +
+  theme(legend.position = "none")
+
+# Save the plot as a PDF
+#ggsave(filename = ".../plot_for_second_question.pdf", 
+       #plot = plot_for_second_question, 
+       #width = 10, height = 5, dpi = 300)
